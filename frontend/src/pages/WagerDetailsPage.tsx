@@ -13,6 +13,10 @@ import {
   Typography,
   Tooltip,
   CircularProgress,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import InfoIcon from '@mui/icons-material/Info';
@@ -39,13 +43,16 @@ export const WagerDetailsPage = () => {
   const { address, isConnected, isCorrectNetwork, switchToAmoy } = useWallet();
   const { showToast } = useToast();
   const { wager: contractWager, refetch: refetchWager, isConfigured, isLoading: isContractLoading, isNotFound, invalidId } = useWagerById(id || undefined);
-  const { pledge: contractPledge, resolveWager: contractResolveWager, signMultiSig: contractSignMultiSig, isPending: isWritePending } = useWagerWrite();
+  const { pledge: contractPledge, resolveWager: contractResolveWager, signMultiSig: contractSignMultiSig, releaseFunds: contractReleaseFunds, cancelWager: contractCancelWager, isPending: isWritePending } = useWagerWrite();
 
   const wager = isContractConfigured && isConfigured ? contractWager : storeGetWager(id || '');
   const [amount, setAmount] = useState('0.1');
   const [isPledging, setIsPledging] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
+  const [isReleasing, setIsReleasing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [selectedWinner, setSelectedWinner] = useState<string>('');
   const [localSignatures, setLocalSignatures] = useState<string[]>([]);
   const signatures =
     isContractConfigured && wager
@@ -147,9 +154,13 @@ export const WagerDetailsPage = () => {
       showToast('Cannot resolve: no participants. Winner must be a participant.', 'warning');
       return;
     }
-    const winner = wager.participants[0]?.address ?? (address as `0x${string}`);
+    const winner = selectedWinner || wager.participants[0]?.address;
     if (!winner) {
-      showToast('No winner address available', 'error');
+      showToast('Please select a winner', 'error');
+      return;
+    }
+    if (!wager.participants.some(p => p.address.toLowerCase() === winner.toLowerCase())) {
+      showToast('Selected winner must be a participant in this wager', 'error');
       return;
     }
     setIsResolving(true);
@@ -210,6 +221,92 @@ export const WagerDetailsPage = () => {
       setIsSigning(false);
     }
   };
+
+  const handleReleaseFunds = async () => {
+    if (!isCorrectNetwork) {
+      showToast(`Wrong network. Switching to ${NETWORK_LABEL}… Approve in your wallet, then try again.`, 'warning');
+      try {
+        await switchToAmoy();
+      } catch (e) {
+        console.warn('Switch network:', e);
+      }
+      return;
+    }
+    if (wager.status !== 'RESOLVED') {
+      showToast('Wager must be resolved before releasing funds', 'warning');
+      return;
+    }
+    setIsReleasing(true);
+    try {
+      if (isContractConfigured) {
+        const txHash = await contractReleaseFunds(wager.id);
+        refetchWager();
+        showToast(
+          'Funds released successfully!',
+          'success',
+          { url: getExplorerTxUrl(txHash), label: 'View on explorer' }
+        );
+      } else {
+        await new Promise((r) => setTimeout(r, 500));
+        showToast('Funds released successfully!', 'success');
+      }
+    } catch (error: unknown) {
+      console.error('[ReleaseFunds]', error);
+      const msg = getContractErrorMessage(error);
+      showToast(msg.length > 120 ? `${msg.slice(0, 117)}…` : msg, 'error');
+    } finally {
+      setIsReleasing(false);
+    }
+  };
+
+  const handleCancelWager = async () => {
+    if (!isCorrectNetwork) {
+      showToast(`Wrong network. Switching to ${NETWORK_LABEL}… Approve in your wallet, then try again.`, 'warning');
+      try {
+        await switchToAmoy();
+      } catch (e) {
+        console.warn('Switch network:', e);
+      }
+      return;
+    }
+    if (address?.toLowerCase() !== wager.creator.toLowerCase()) {
+      showToast('Only the creator can cancel this wager', 'error');
+      return;
+    }
+    const canCancel = wager.participants.length === 0 || (Date.now() > wager.deadline && wager.status !== 'RESOLVED');
+    if (!canCancel) {
+      showToast('Cannot cancel: wager has participants and deadline has not passed', 'warning');
+      return;
+    }
+    setIsCancelling(true);
+    try {
+      if (isContractConfigured) {
+        const txHash = await contractCancelWager(wager.id);
+        refetchWager();
+        showToast(
+          'Wager cancelled successfully. Funds refunded.',
+          'success',
+          { url: getExplorerTxUrl(txHash), label: 'View on explorer' }
+        );
+      } else {
+        await new Promise((r) => setTimeout(r, 500));
+        showToast('Wager cancelled successfully. Funds refunded.', 'success');
+      }
+    } catch (error: unknown) {
+      console.error('[CancelWager]', error);
+      const msg = getContractErrorMessage(error);
+      showToast(msg.length > 120 ? `${msg.slice(0, 117)}…` : msg, 'error');
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const isCreator = address?.toLowerCase() === wager.creator.toLowerCase();
+  const canCancel = isCreator && (wager.participants.length === 0 || (Date.now() > wager.deadline && wager.status !== 'RESOLVED' && wager.status !== 'CANCELLED'));
+  const canRelease = wager.status === 'RESOLVED' && wager.winner && (
+    (wager.multiSigDeadline && Date.now() >= wager.multiSigDeadline) ||
+    (wager.participants?.every(p => p.hasSigned) ?? false)
+  );
 
   return (
     <Stack spacing={3}>
@@ -364,15 +461,33 @@ export const WagerDetailsPage = () => {
                           ? `Switch to ${NETWORK_LABEL}` 
                           : 'Confirm Pledge'}
                       </Button>
-                      {wager.status !== 'RESOLVED' && (
+                      {wager.status !== 'RESOLVED' && wager.participants.length > 0 && (
                         <>
+                          <FormControl fullWidth sx={{ mt: 1 }}>
+                            <InputLabel id="winner-select-label">Select Winner</InputLabel>
+                            <Select
+                              labelId="winner-select-label"
+                              id="winner-select"
+                              value={selectedWinner}
+                              label="Select Winner"
+                              onChange={(e) => setSelectedWinner(e.target.value)}
+                              disabled={isResolving || isWritePending}
+                            >
+                              {wager.participants.map((p) => (
+                                <MenuItem key={p.id} value={p.address}>
+                                  {formatAddress(p.address)} - {formatAmount(p.pledgedAmount)} POL
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
                           <Button 
                             variant="outlined" 
                             color="secondary" 
                             onClick={handleResolve} 
                             fullWidth
-                            disabled={isResolving || isWritePending || wager.participants.length === 0}
+                            disabled={isResolving || isWritePending || !selectedWinner || wager.participants.length === 0}
                             startIcon={(isResolving || isWritePending) ? <CircularProgress size={20} color="inherit" /> : undefined}
+                            sx={{ mt: 1 }}
                           >
                             {isResolving || isWritePending ? 'Resolving...' : '🎯 Resolve Wager'}
                           </Button>
@@ -381,7 +496,33 @@ export const WagerDetailsPage = () => {
                             marketId={wager.marketId}
                             disabled={!!wager.winner}
                           />
+                          {canCancel && (
+                            <Button 
+                              variant="outlined" 
+                              color="error" 
+                              onClick={handleCancelWager} 
+                              fullWidth
+                              disabled={isCancelling || isWritePending}
+                              startIcon={(isCancelling || isWritePending) ? <CircularProgress size={20} color="inherit" /> : undefined}
+                              sx={{ mt: 1 }}
+                            >
+                              {isCancelling || isWritePending ? 'Cancelling...' : '❌ Cancel Wager'}
+                            </Button>
+                          )}
                         </>
+                      )}
+                      {wager.status === 'RESOLVED' && canRelease && (
+                        <Button 
+                          variant="contained" 
+                          color="success" 
+                          onClick={handleReleaseFunds} 
+                          fullWidth
+                          disabled={isReleasing || isWritePending}
+                          startIcon={(isReleasing || isWritePending) ? <CircularProgress size={20} color="inherit" /> : undefined}
+                          sx={{ mt: 1 }}
+                        >
+                          {isReleasing || isWritePending ? 'Releasing...' : '💰 Release Funds to Winner'}
+                        </Button>
                       )}
                     </Stack>
                     {!isConnected && (
@@ -410,7 +551,13 @@ export const WagerDetailsPage = () => {
           <MultiSigStatus 
             participants={wager.participants.map((p) => ({ address: p.address, amount: p.pledgedAmount }))}
             signatures={signatures}
-            deadline={wager.multiSigDeadlineHours ? Date.now() + wager.multiSigDeadlineHours * 60 * 60 * 1000 : undefined}
+            deadline={
+              wager.multiSigDeadline 
+                ? wager.multiSigDeadline 
+                : wager.resolvedAt && wager.multiSigDeadlineHours 
+                  ? wager.resolvedAt + wager.multiSigDeadlineHours * 60 * 60 * 1000 
+                  : undefined
+            }
             onSign={handleSign}
             isSigning={isSigning || isWritePending}
           />

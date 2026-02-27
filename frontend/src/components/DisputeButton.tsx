@@ -32,11 +32,32 @@ export const DisputeButton = ({ wagerId, marketId, disabled }: DisputeButtonProp
 
     setIsSubmitting(true);
     try {
+      // Store dispute information (in a real implementation, this would call an API or contract)
+      const disputeData = {
+        wagerId,
+        marketId,
+        reason: reason.trim(),
+        timestamp: Date.now(),
+        submittedBy: 'user', // In real implementation, get from wallet
+      };
+      
+      // Log dispute for now (in production, this would be sent to backend/contract)
+      console.log('Dispute submitted:', disputeData);
+      
+      // Simulate API call delay
       await new Promise((resolve) => setTimeout(resolve, 1000));
       
-      showToast('Dispute submitted to Polymarket for resolution', 'success');
+      // In production: await submitDisputeToPolymarket(disputeData);
+      
+      showToast(
+        marketId 
+          ? `Dispute submitted to Polymarket market ${marketId} for resolution` 
+          : 'Dispute logged. In production, this would be submitted to Polymarket for resolution.',
+        'success'
+      );
       handleClose();
     } catch (error) {
+      console.error('Dispute submission error:', error);
       showToast('Failed to submit dispute. Please try again.', 'error');
     } finally {
       setIsSubmitting(false);

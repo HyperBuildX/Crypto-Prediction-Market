@@ -83,7 +83,15 @@ contract WagerContract is ReentrancyGuard, Ownable {
 
     constructor() Ownable(msg.sender) {}
 
-    // Creates a new wager. Returns the wager ID.
+    /// @notice Creates a new wager. Returns the wager ID.
+    /// @param title The title of the wager
+    /// @param description Detailed description of the wager
+    /// @param minPledge Minimum amount required to participate (in wei)
+    /// @param deadline Unix timestamp when the wager deadline expires
+    /// @param multiSigDeadlineHours Hours after resolution for multi-sig signing deadline
+    /// @param isPublic Whether the wager is publicly visible
+    /// @param marketId Optional Polymarket market ID for dispute resolution
+    /// @return wagerId The ID of the newly created wager
     function createWager(
         string memory title,
         string memory description,
@@ -113,7 +121,8 @@ contract WagerContract is ReentrancyGuard, Ownable {
         wager.multiSigDeadlineHours = multiSigDeadlineHours;
         wager.marketId = marketId;
 
-        userWagers[msg.sender].push(wagerId);
+        // Note: userWagers is updated in pledge() when creator pledges
+        // This prevents duplicate entries if creator creates and then pledges
 
         emit WagerCreated(
             wagerId,
@@ -127,7 +136,9 @@ contract WagerContract is ReentrancyGuard, Ownable {
         return wagerId;
     }
 
-    // Pledge funds to a wager. Creator has to pledge first.
+    /// @notice Pledge funds to a wager. Creator must pledge first.
+    /// @param wagerId The ID of the wager to pledge to
+    /// @dev The creator must be the first to pledge. Subsequent participants can pledge any amount >= minPledge.
     function pledge(uint256 wagerId) external payable nonReentrant {
         Wager storage wager = wagers[wagerId];
         require(wager.id > 0, "Wager does not exist");
@@ -172,7 +183,10 @@ contract WagerContract is ReentrancyGuard, Ownable {
         emit Pledged(wagerId, msg.sender, msg.value);
     }
 
-    // Resolves the wager and sets the winner. Only creator or owner can call this.
+    /// @notice Resolves the wager and sets the winner. Only creator or owner can call this.
+    /// @param wagerId The ID of the wager to resolve
+    /// @param winner The address of the winning participant
+    /// @dev Sets the wager status to RESOLVED and calculates the multi-sig deadline.
     function resolveWager(
         uint256 wagerId,
         address winner
@@ -199,8 +213,10 @@ contract WagerContract is ReentrancyGuard, Ownable {
         emit WagerResolved(wagerId, winner, wager.totalPledged);
     }
 
-    // Sign the multi-sig. If everyone signs, funds release automatically.
-    function signMultiSig(uint256 wagerId) external {
+    /// @notice Sign the multi-sig to approve fund release. If everyone signs, funds release automatically.
+    /// @param wagerId The ID of the resolved wager
+    /// @dev Once all participants sign, funds are automatically released to the winner.
+    function signMultiSig(uint256 wagerId) external nonReentrant {
         Wager storage wager = wagers[wagerId];
         require(wager.id > 0, "Wager does not exist");
         require(
@@ -228,7 +244,9 @@ contract WagerContract is ReentrancyGuard, Ownable {
         }
     }
 
-    // Release funds to winner. Can be called after deadline passes or if everyone signed.
+    /// @notice Release funds to winner. Can be called after deadline passes or if everyone signed.
+    /// @param wagerId The ID of the resolved wager
+    /// @dev Funds can be released if either all participants signed or the multi-sig deadline has passed.
     function releaseFunds(uint256 wagerId) external nonReentrant {
         Wager storage wager = wagers[wagerId];
         require(wager.id > 0, "Wager does not exist");
@@ -272,8 +290,11 @@ contract WagerContract is ReentrancyGuard, Ownable {
         return true;
     }
 
-    // Cancel a wager. Only creator can do this, and only if no one pledged yet or deadline passed.
-    function cancelWager(uint256 wagerId) external {
+    /// @notice Cancel a wager. Only creator or owner can do this.
+    /// @param wagerId The ID of the wager to cancel
+    /// @dev Can only cancel if no participants pledged yet, or if deadline passed and wager is not resolved.
+    ///      All pledged funds are refunded to participants.
+    function cancelWager(uint256 wagerId) external nonReentrant {
         Wager storage wager = wagers[wagerId];
         require(wager.id > 0, "Wager does not exist");
         require(
@@ -290,6 +311,9 @@ contract WagerContract is ReentrancyGuard, Ownable {
         wager.status = WagerStatus.CANCELLED;
 
         // Refund all participants
+        uint256 totalToRefund = wager.totalPledged;
+        wager.totalPledged = 0; // Zero out first to prevent reentrancy
+        
         for (uint256 i = 0; i < wager.participants.length; i++) {
             Participant memory p = wager.participants[i];
             (bool success, ) = payable(p.participant).call{

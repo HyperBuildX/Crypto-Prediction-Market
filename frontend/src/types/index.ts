@@ -30,6 +30,8 @@ export interface Wager {
   isPublic?: boolean;
   // Hours for multi-sig signing deadline - after this passes, can go to dispute
   multiSigDeadlineHours?: number;
+  // Actual multi-sig deadline timestamp (set after resolution)
+  multiSigDeadline?: number;
   // Email addresses of people invited to join
   inviteEmails?: string[];
 }

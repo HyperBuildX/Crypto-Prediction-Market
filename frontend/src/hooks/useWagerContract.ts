@@ -68,7 +68,7 @@ export function mapContractWagerToWager(raw: readonly unknown[]): Wager {
     resolvedAt,
     isPublic,
     multiSigDeadlineHours,
-    _multiSigDeadline,
+    multiSigDeadline,
     marketId,
     _participantCount,
   ] = raw as [
@@ -88,6 +88,7 @@ export function mapContractWagerToWager(raw: readonly unknown[]): Wager {
     resolvedAt: resolvedAt ? Number(resolvedAt) * 1000 : undefined,
     isPublic: isPublic ?? true,
     multiSigDeadlineHours: Number(multiSigDeadlineHours ?? 0),
+    multiSigDeadline: multiSigDeadline ? Number(multiSigDeadline) * 1000 : undefined,
     participants: [],
     marketId: marketId || undefined,
   };
