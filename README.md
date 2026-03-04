@@ -275,6 +275,8 @@ npm run lint
 ## Support
 
 For questions, issues, or feature requests, please open an issue on the repository.
+- E-Mail: admin@hyperbuildx.com
+- Telegram: [@hyperbuildx](https://t.me/hyperbuildx)
 
 ---
 
